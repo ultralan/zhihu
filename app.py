@@ -12,10 +12,9 @@ FEISHU_WEBHOOK = os.getenv(
     "FEISHU_WEBHOOK",
     "https://open.feishu.cn/open-apis/bot/v2/hook/c5678c43-f33f-47f1-ad5e-f4009bd7b50c",
 )
-CDN_JSON_URL = "https://cdn.jsdelivr.net/gh/hu-qi/trending-in-one/raw/zhihu-search/{date}.json"
+ZHIHU_API = "https://api.zhihu.com/topstory/hot-lists/total?limit=50"
 TZ = pytz.timezone(os.getenv("TZ", "Asia/Shanghai"))
 PORT = int(os.getenv("PORT", 1000))
-MAX_RETRY_DAYS = 7  # 最多往前回退几天
 
 # ──────────────────────────── 日志 ────────────────────────────
 logging.basicConfig(
@@ -32,58 +31,47 @@ MAX_HISTORY = 50
 
 # ──────────────────────────── 核心逻辑 ────────────────────────────
 def fetch_zhihu_hot() -> dict | None:
-    """从 CDN 获取知乎热榜，当天无数据则往前回退最多 7 天。"""
-    today = datetime.now(TZ).date()
-
-    for offset in range(MAX_RETRY_DAYS):
-        date = today - timedelta(days=offset)
-        date_str = date.strftime("%Y-%m-%d")
-        url = CDN_JSON_URL.format(date=date_str)
-
-        if offset == 0:
-            log.info("正在获取 %s 热榜: %s", date_str, url)
-        else:
-            log.info("当天无数据，回退尝试 %s", date_str)
-
-        try:
-            resp = requests.get(url, timeout=30)
-            resp.raise_for_status()
-            data = resp.json()
-            count = len(data) if isinstance(data, list) else 0
-            log.info("获取成功 [%s]，共 %d 条", date_str, count)
-            return {"date": date_str, "items": data, "is_latest": offset == 0}
-        except requests.RequestException:
-            continue
-
-    log.error("最近 %d 天均无可用数据", MAX_RETRY_DAYS)
-    return None
+    """从知乎移动端 API 获取实时热榜。"""
+    log.info("正在获取知乎热榜...")
+    try:
+        resp = requests.get(ZHIHU_API, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+        resp.raise_for_status()
+        data = resp.json().get("data", [])
+        items = []
+        for item in data:
+            target = item.get("target", {})
+            items.append({
+                "title": target.get("title", ""),
+                "url": target.get("url", "").replace("api.zhihu.com/questions", "www.zhihu.com/question"),
+                "heat": item.get("detail_text", ""),
+            })
+        log.info("获取成功，共 %d 条", len(items))
+        return {"date": datetime.now(TZ).strftime("%Y-%m-%d"), "items": items}
+    except requests.RequestException as e:
+        log.error("获取失败: %s", e)
+        return None
 
 
 def build_feishu_message(result: dict) -> dict:
     """将热榜数据构建为飞书消息。"""
     items = result["items"]
     date_str = result["date"]
-    is_latest = result.get("is_latest", True)
 
     if not isinstance(items, list) or len(items) == 0:
-        return {
-            "msg_type": "text",
-            "content": {"text": f"知乎热榜 ({date_str})\n\n暂无数据"},
-        }
+        return {"msg_type": "text", "content": {"text": f"知乎热榜 ({date_str})\n\n暂无数据"}}
 
-    tag = "" if is_latest else f"(存档数据，最近可用: {date_str})\n\n"
     top_items = items[:30]
     lines = []
     for i, item in enumerate(top_items, 1):
-        title = item.get("title") or item.get("query") or item.get("display_query") or str(item)
-        heat = item.get("heat") or item.get("hot") or ""
+        title = item.get("title", "")
+        heat = item.get("heat", "")
         line = f"{i}. {title}"
         if heat:
             line += f"  {heat}"
         lines.append(line)
 
     now_str = datetime.now(TZ).strftime("%H:%M")
-    text = f"知乎热榜 ({date_str} {now_str})\n{tag}\n" + "\n".join(lines)
+    text = f"知乎热榜 ({date_str} {now_str})\n\n" + "\n".join(lines)
 
     if len(text) > 4000:
         text = text[:4000] + "\n\n... (已截断)"
