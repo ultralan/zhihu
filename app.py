@@ -53,30 +53,41 @@ def fetch_zhihu_hot() -> dict | None:
 
 
 def build_feishu_message(result: dict) -> dict:
-    """将热榜数据构建为飞书消息。"""
+    """将热榜数据构建为飞书卡片消息。"""
     items = result["items"]
     date_str = result["date"]
+    now_str = datetime.now(TZ).strftime("%H:%M")
 
     if not isinstance(items, list) or len(items) == 0:
         return {"msg_type": "text", "content": {"text": f"知乎热榜 ({date_str})\n\n暂无数据"}}
 
-    top_items = items[:30]
-    lines = []
+    top_items = items[:10]
+    elements = []
     for i, item in enumerate(top_items, 1):
         title = item.get("title", "")
         heat = item.get("heat", "")
-        line = f"{i}. {title}"
+        url = item.get("url", "")
+
+        content = f"**{i}. {title}**"
         if heat:
-            line += f"  {heat}"
-        lines.append(line)
+            content += f"\n🔥 {heat}"
+        if url:
+            content += f"\n[查看详情]({url})"
 
-    now_str = datetime.now(TZ).strftime("%H:%M")
-    text = f"知乎热榜 ({date_str} {now_str})\n\n" + "\n".join(lines)
+        elements.append({"tag": "div", "text": {"tag": "lark_md", "content": content}})
+        if i < len(top_items):
+            elements.append({"tag": "hr"})
 
-    if len(text) > 4000:
-        text = text[:4000] + "\n\n... (已截断)"
-
-    return {"msg_type": "text", "content": {"text": text}}
+    return {
+        "msg_type": "interactive",
+        "card": {
+            "header": {
+                "title": {"tag": "plain_text", "content": f"📊 知乎热榜 {date_str} {now_str}"},
+                "template": "blue"
+            },
+            "elements": elements
+        }
+    }
 
 
 def send_to_feishu(message: dict) -> bool:
