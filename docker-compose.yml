@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  zhihu-hot:
+    build: .
+    container_name: zhihu-hot
+    restart: always
+    ports:
+      - "1000:1000"
+    environment:
+      - TZ=Asia/Shanghai
+      - PORT=1000
+      - FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/c5678c43-f33f-47f1-ad5e-f4009bd7b50c
